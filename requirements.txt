@@ -1,5 +1,2 @@
-pandas
-numpy
-matplotlib
-scikit-learn
-yfinance
+requests
+beautifulsoup4
