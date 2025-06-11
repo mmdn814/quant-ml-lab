@@ -1,0 +1,35 @@
+name: Quant ML Lab Auto Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      strategy_name:
+        description: '手动执行策略 (输入策略目录名)'
+        required: true
+        default: 'insider_ceo'
+
+  schedule:
+    # 默认统一每天凌晨检测调度计划 (UTC时间 00:05)
+    - cron: '5 0 * * *'
+
+jobs:
+  run-scheduler:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Scheduled Jobs
+        run: |
+          python run_scheduler.py
+
