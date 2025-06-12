@@ -1,0 +1,3 @@
+schedules:
+  insider_ceo:
+    cron: "30 12 * * 1-5"  # 美东时间 08:30 AM
