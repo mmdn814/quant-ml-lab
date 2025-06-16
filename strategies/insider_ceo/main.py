@@ -1,3 +1,9 @@
+#下载最近 Form 4 XML 文件（含容错）
+#解析 CEO 买入（类型为 P - Purchase）
+#排序选出买入最多的 20 条
+#发送 Telegram 报告
+#所有模块皆有日志记录、错误提示、异常推送
+
 from shared.logger import setup_logger
 from shared.telegram_notifier import send_telegram_message
 from shared.edgar_downloader import EdgarDownloader
