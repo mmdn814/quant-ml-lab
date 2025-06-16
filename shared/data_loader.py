@@ -1,18 +1,25 @@
-import pandas as pd
+#暂时并未影响主流程；
+#未来若你做全美市场公司名 → Ticker → CIK 完整映射时可直接接入；
+#保留为后续模型扩展预留接口 ✅
 
-def load_local_csv(path: str) -> pd.DataFrame:
+import os
+import json
+
+def load_latest_cik_mapping():
     """
-    从本地 CSV 文件中加载数据。
-
-    参数:
-        path (str): 文件路径
-
-    返回:
-        pd.DataFrame: 加载的数据内容
+    预留的 CIK 编号映射读取（目前暂未用）
+    未来当我们做完整历史数据建模时可自动拉取公司基本信息做补充特征
     """
-    try:
-        df = pd.read_csv(path)
-        return df
-    except Exception as e:
-        print(f"读取失败：{e}")
-        return pd.DataFrame()
+    mapping_file = "data/company_cik_mapping.json"
+
+    if os.path.exists(mapping_file):
+        try:
+            with open(mapping_file, "r", encoding="utf-8") as f:
+                mapping = json.load(f)
+            return mapping
+        except Exception as e:
+            print(f"载入 CIK Mapping 失败: {e}")
+            return {}
+
+    else:
+        return {}
