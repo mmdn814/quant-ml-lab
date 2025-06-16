@@ -1,3 +1,9 @@
+#完全使用 SEC 官方 API (Atom feed)，避免中间第三方失效问题；
+#支持多天抓取兜底；
+#单文件独立错误捕捉，最大限度提升稳定性；
+#日志打印非常详细，方便后续监控；
+#后续兼容你当前 main.py 完全一致，已准备好集成。
+
 import os
 import requests
 import gzip
