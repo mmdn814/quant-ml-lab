@@ -1,4 +1,8 @@
-# 文件路径: shared/fintel_scraper.py
+#完整抓取逻辑（Insider Ownership、Institutional Ownership、Float、Short Interest）
+#高容错（重试机制、单票失败不影响整体）
+#日志记录
+#防止风控（每票延时控制）
+#清晰注释，方便你未来扩展
 
 import requests
 from bs4 import BeautifulSoup
