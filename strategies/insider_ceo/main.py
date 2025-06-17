@@ -6,6 +6,8 @@
 #完整容错、日志、Telegram 通知
 
 
+# 文件路径：strategies/insider_ceo/main.py
+
 from shared.logger import setup_logger
 from shared.telegram_notifier import send_telegram_message
 from shared.edgar_downloader import EdgarDownloader
@@ -114,3 +116,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
