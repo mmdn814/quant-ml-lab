@@ -1,10 +1,24 @@
+# 🐍 Python 缓存文件
 __pycache__/
 *.py[cod]
+
+# 📓 Jupyter & 编辑器临时文件
 *.ipynb_checkpoints/
-.env
-.DS_Store
-*.csv
-*.log
 .vscode/
 .idea/
 
+# 🔐 敏感文件 & 操作系统缓存
+.env
+.DS_Store
+
+# 🗃️ 自动生成的每日数据结果
+data/**/*.csv
+*.log
+
+# ✅ 保留静态 CSV 配置或训练文件
+!config/*.csv
+
+# 📦 模型文件（如使用 pickle、parquet 时）
+*.parquet
+*.pkl
+models/
