@@ -16,10 +16,13 @@ class EdgarDownloader:
         self.data_dir = data_dir
         self.base_feed_url = "https://www.sec.gov/Archives/edgar/daily-index/xbrl"
         self.headers = {
-            'User-Agent': 'Quant-ML-Lab SEC Downloader (https://github.com/mmdn814)',
-            'Accept-Encoding': 'gzip, deflate',
-            'Accept': 'application/atom+xml'
+            "User-Agent": "Mozilla/5.0 (compatible; Quant-ML-Lab-Bot/1.0; +https://github.com/mmdn814)",
+            "Accept": "application/atom+xml",
+            "Accept-Encoding": "gzip, deflate",
+            "Connection": "keep-alive",
+            "From": "mmdn814@gmail.com"  # 替换为你注册 GitHub 使用的邮箱
         }
+
         os.makedirs(self.data_dir, exist_ok=True)
 
     def download_latest_form4(self, days_back=7):
