@@ -1,9 +1,3 @@
-#完全使用 SEC 官方 API (Atom feed)，避免中间第三方失效问题；
-#支持多天抓取兜底；
-#单文件独立错误捕捉，最大限度提升稳定性；
-#日志打印非常详细，方便后续监控；
-#后续兼容你当前 main.py 完全一致，已准备好集成。
-
 import os
 import requests
 import gzip
@@ -22,13 +16,13 @@ class EdgarDownloader:
         self.data_dir = data_dir
         self.base_feed_url = "https://www.sec.gov/Archives/edgar/daily-index/xbrl"
         self.headers = {
-            'User-Agent': 'Quant-ML-Lab SEC Downloader (mmdn814)',  # 改为你自己 github id
+            'User-Agent': 'Quant-ML-Lab SEC Downloader (https://github.com/mmdn814)',
             'Accept-Encoding': 'gzip, deflate',
-            'Host': 'www.sec.gov'
+            'Accept': 'application/atom+xml'
         }
         os.makedirs(self.data_dir, exist_ok=True)
 
-    def download_latest_form4(self, days_back=2):
+    def download_latest_form4(self, days_back=7):
         """
         下载最近 N 天内所有 Form 4 XML 文件
         """
@@ -38,7 +32,6 @@ class EdgarDownloader:
         for delta in range(days_back):
             target_date = datetime.now() - timedelta(days=delta)
             date_str = target_date.strftime("%Y%m%d")
-            atom_url = f"https://www.sec.gov/Archives/edgar/usgaap.rss.xml"
 
             try:
                 feed_url = f"https://www.sec.gov/Archives/edgar/daily-index/{target_date.year}/QTR{(target_date.month - 1) // 3 + 1}/index.json"
