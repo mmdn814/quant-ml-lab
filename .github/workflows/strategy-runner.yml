@@ -33,7 +33,7 @@ jobs:
           python strategies/insider_ceo/main.py
 
       - name: Upload Result CSV   # ✅ 注意这行对齐上一个 step
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ceo_results_csv
           path: data/insider_ceo/*.csv
