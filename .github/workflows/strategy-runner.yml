@@ -1,35 +1,30 @@
-name: Quant ML Lab Auto Runner
+name: Run Insider CEO Strategy
 
 on:
-  workflow_dispatch:
-    inputs:
-      strategy_name:
-        description: '手动执行策略 (输入策略目录名)'
-        required: true
-        default: 'insider_ceo'
-
+  workflow_dispatch:  # ✅ 支持手动触发
   schedule:
-    # 默认统一每天凌晨检测调度计划 (UTC时间 00:05)
-    - cron: '5 0 * * *'
+    - cron: "30 12 * * 1-5"  # ✅ 定时触发（美东时间 08:30）
 
 jobs:
-  run-scheduler:
+  run-insider-ceo:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
+      - name: Checkout Repo
         uses: actions/checkout@v3
 
-      - name: Setup Python
-        uses: actions/setup-python@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: 3.11
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
           pip install -r requirements.txt
 
-      - name: Run Scheduled Jobs
+      - name: Run Insider CEO Strategy
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python run_scheduler.py
+          python strategies/insider_ceo/main.py
 
