@@ -1,13 +1,15 @@
 name: Run Insider CEO Strategy
 
 on:
-  workflow_dispatch:  # ✅ 支持手动触发
+  workflow_dispatch:  # ✅ 手动触发
   schedule:
-    - cron: "30 12 * * 1-5"  # ✅ 定时触发（美东时间 08:30）
+    - cron: "30 12 * * 1-5"  # ✅ 美东时间 08:30 触发
 
 jobs:
   run-insider-ceo:
     runs-on: ubuntu-latest
+    environment: TELEGRAM_TOKEN  # ✅ 指定环境名，匹配你设置 Secrets 的 Environment 名称
+
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v3
@@ -32,8 +34,9 @@ jobs:
         run: |
           python strategies/insider_ceo/main.py
 
-      - name: Upload Result CSV   # ✅ 注意这行对齐上一个 step
+      - name: Upload Result CSV
         uses: actions/upload-artifact@v4
         with:
           name: ceo_results_csv
           path: data/insider_ceo/*.csv
+
