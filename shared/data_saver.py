@@ -4,7 +4,13 @@
 
 import csv
 import os
+import pandas as pd
 from datetime import datetime
+
+def save_dataframe_to_csv(df: pd.DataFrame, path: str):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    df.to_csv(path, index=False)
+
 
 def save_ceo_trades_to_csv(ceo_buys, data_dir='data/insider_ceo'):
     """
