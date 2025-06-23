@@ -1,4 +1,7 @@
-requests
-beautifulsoup4
-PyYAML
-pytz
+requests           # 用于请求 EDGAR、Fintel 等数据接口
+beautifulsoup4     # 用于解析 HTML 页面，如 Fintel 网页结构
+PyYAML             # 用于解析 config/schedule_config.yaml
+pytz               # 用于处理时区（如调度精度控制）
+pandas             # 核心数据分析和保存 CSV
+lxml               # 加快 beautifulsoup 的 HTML 解析速度（强烈推荐）
+python-dotenv      # 用于读取本地 .env 环境变量
