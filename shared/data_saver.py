@@ -1,21 +1,17 @@
-#每天将解析出来的 CEO 买入数据保存一份 CSV；
-#方便未来数据积累、复盘、模型训练；
-#防止仅仅依赖于 Telegram 推送日志丢失。
-
 import csv
 import os
 import pandas as pd
 from datetime import datetime
 
-def save_dataframe_to_csv(df: pd.DataFrame, path: str):
+def save_dataframe_to_csv(df: pd.DataFrame, path: str, logger=None):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     df.to_csv(path, index=False)
+    if logger:
+        logger.info(f"[保存成功] DataFrame 保存至：{path}")
+    else:
+        print(f"[保存成功] DataFrame 保存至：{path}")
 
-
-def save_ceo_trades_to_csv(ceo_buys, data_dir='data/insider_ceo'):
-    """
-    将每日解析出的 CEO 买入记录保存为 CSV 文件，方便后续回测与建模使用
-    """
+def save_ceo_trades_to_csv(ceo_buys, data_dir='data/insider_ceo', logger=None):
     if not ceo_buys:
         return
 
@@ -38,6 +34,17 @@ def save_ceo_trades_to_csv(ceo_buys, data_dir='data/insider_ceo'):
             writer.writeheader()
             for row in ceo_buys:
                 writer.writerow(row)
+
+        if logger:
+            logger.info(f"[原始数据保存成功] CEO 买入记录保存至：{filename}")
+        else:
+            print(f"[原始数据保存成功] CEO 买入记录保存至：{filename}")
+
     except Exception as e:
-        print(f"保存 CSV 失败: {e}")
+        err_msg = f"保存 CSV 失败: {e}"
+        if logger:
+            logger.error(err_msg)
+        else:
+            print(err_msg)
+
 
