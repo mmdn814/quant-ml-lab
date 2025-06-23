@@ -48,3 +48,4 @@ def save_ceo_trades_to_csv(ceo_buys, data_dir='data/insider_ceo', logger=None):
             print(err_msg)
 
 
+
