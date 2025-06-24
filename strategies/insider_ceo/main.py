@@ -1,3 +1,7 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()  # ✅ 从 .env 文件加载环境变量
+
 from shared.logger import setup_logger
 from strategies.insider_ceo.form4_ceo_selector import run_ceo_strategy
 from strategies.insider_ceo.telegram_push import send_trade_summary
