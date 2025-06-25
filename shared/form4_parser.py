@@ -5,7 +5,6 @@
 from shared.logger import setup_logger
 from shared.telegram_notifier import send_telegram_message
 from shared.edgar_downloader import EdgarDownloader
-from shared.form4_parser import Form4Parser
 from shared.data_saver import save_ceo_trades_to_csv
 from shared.data_loader import load_latest_cik_mapping
 from shared.fintel_scraper import FintelScraper
