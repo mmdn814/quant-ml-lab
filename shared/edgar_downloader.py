@@ -4,6 +4,8 @@ import time
 import random
 from datetime import datetime, timedelta
 from xml.etree import ElementTree as ET
+from time import sleep  # ✅ 加上这个
+
 
 class EdgarDownloader:
     """
@@ -82,13 +84,13 @@ class EdgarDownloader:
     
         for entry in entries:
             try:
-                # 使用 entry.id 提取 accession 编号
-                accession_url = entry.find('atom:id', ns).text
-                # 例子：https://www.sec.gov/Archives/edgar/data/800262/0000950124-94-000048
-                accession_path = accession_url.replace("https://www.sec.gov/Archives/", "")
-                filename = accession_path.split('/')[-1] + ".xml"
-                form4_url = f"https://www.sec.gov/Archives/{accession_path}.xml"
+               # 从 link 标签提取实际可访问的 HTML 页面链接
+                html_url = entry.find('atom:link', ns).attrib['href']  # 例如 https://www.sec.gov/Archives/edgar/data/0000950124/000095012494000050/0000950124-94-000050-index.html
+                # 替换 .html 为 .xml
+                form4_url = html_url.replace("-index.html", ".xml")
+                filename = form4_url.split("/")[-1]
                 local_path = os.path.join(self.data_dir, filename)
+                
     
                 # 下载 XML 文件
                 self._download_single_form4(form4_url, local_path)
