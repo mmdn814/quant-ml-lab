@@ -1,3 +1,7 @@
+# form4_ceo_selector.py
+# 最后修改时间：2025-06-25
+# 功能：运行 CEO 买入策略，包含下载、解析、结构评分、Fintel 数据、Telegram 推送等
+
 from shared.logger import setup_logger
 from shared.telegram_notifier import send_telegram_message
 from shared.edgar_downloader import EdgarDownloader
@@ -7,7 +11,7 @@ from shared.data_loader import load_latest_cik_mapping
 from shared.fintel_scraper import FintelScraper
 import traceback
 
-
+# ============ 结构评分计算 ============
 def compute_structure_score(data):
     score = 0
     if data['insider'] and data['insider'] > 60:
@@ -18,7 +22,7 @@ def compute_structure_score(data):
         score += 1
     return score
 
-
+# ============ squeeze 评分计算 ============
 def compute_squeeze_score(data):
     score = 0
     if data['short_interest'] and data['short_interest'] > 10:
@@ -31,16 +35,18 @@ def compute_squeeze_score(data):
         score += 1
     return score
 
-
+# ============ 策略主逻辑 ============
 def run_ceo_strategy(logger):
     logger.info("[启动] insider_ceo 策略开始运行")
 
     try:
+        # 1. 加载最新 CIK 映射（用于后续 Ticker 与 CIK 映射）
         cik_mapping = load_latest_cik_mapping()
         logger.info(f"[DEBUG] 成功加载 CIK 映射: 共 {len(cik_mapping)} 条")
 
+        # 2. 下载近 N 天 Form 4 文件（支持容忍周末延迟）
         downloader = EdgarDownloader(logger)
-        downloaded_files = downloader.download_latest_form4(days_back=2)
+        downloaded_files = downloader.download_latest_form4(days_back=7)
         logger.info(f"[DEBUG] 下载到 Form4 文件数量: {len(downloaded_files)}")
 
         if not downloaded_files:
@@ -49,6 +55,7 @@ def run_ceo_strategy(logger):
             send_telegram_message(msg)
             return
 
+        # 3. 解析出 CEO 买入交易（非期权、非赠与）
         parser = Form4Parser(logger)
         ceo_buys = parser.extract_ceo_purchases(downloaded_files)
         logger.info(f"[DEBUG] CEO 买入记录数: {len(ceo_buys)}")
@@ -59,13 +66,16 @@ def run_ceo_strategy(logger):
             send_telegram_message(msg)
             return
 
+        # 4. 保存结构化结果（完整记录）
         save_ceo_trades_to_csv(ceo_buys, logger=logger)
 
+        # 5. 对买入记录按成交股数排序，选前 top N
         top_stocks = sorted(ceo_buys, key=lambda x: x['shares'], reverse=True)[:20]
 
+        # 6. 获取结构评分、Fintel 数据
         fintel = FintelScraper(logger)
-
         messages = ["🚨 *今日 CEO 买入数量前 20 名 (EDGAR)*"]
+
         for stock in top_stocks:
             ticker = stock['ticker']
             try:
@@ -99,10 +109,10 @@ def run_ceo_strategy(logger):
                 logger.error(f"❌ {ticker} Fintel 解析异常: {e}")
                 continue
 
+        # 7. 最终推送到 Telegram
         send_telegram_message("\n\n".join(messages))
 
     except Exception as e:
         logger.error("运行异常: " + str(e))
         logger.error(traceback.format_exc())
         send_telegram_message(f"🚨 insider_ceo 策略执行异常: {e}")
-
