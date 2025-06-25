@@ -9,7 +9,7 @@ import random
 from datetime import datetime, timedelta
 from xml.etree import ElementTree as ET
 from time import sleep
-
+from shared.sec_api_helper import SecApiHelper  # ✅ 用于构造稳定 XML 下载链接
 
 class EdgarDownloader:
     """
@@ -20,22 +20,18 @@ class EdgarDownloader:
         self.logger = logger
         self.data_dir = data_dir
         self.headers = {
-            # ✅ 必须包含声明身份的 User-Agent（SEC 官方要求）
-            "User-Agent": "QuantMLLabBot/1.0 (Contact: mmdn814@gmail.com)",
+            "User-Agent": "QuantMLLabBot/1.0 (Contact: mmdn814@gmail.com)",  # ✅ 合规 UA
             "Accept": "application/atom+xml",
             "Accept-Encoding": "gzip, deflate",
             "Connection": "keep-alive",
             "From": "mmdn814@gmail.com"
         }
 
-        # 如果数据目录不存在则创建
         os.makedirs(self.data_dir, exist_ok=True)
 
-    def download_latest_form4(self, days_back=7):
+    def download_latest_form4(self, days_back=7, use_sec_api=False):
         """
-        主函数：下载最近 N 天 Form 4 报告（XML 文件）
-        :param days_back: 最近几天（整数）
-        :return: 下载的本地 XML 文件路径列表
+        下载最近 N 天内 Form 4 报告（支持用稳定 URL 构造函数）
         """
         self.logger.info(f"开始下载最近 {days_back} 天内 Form 4 报告")
         downloaded_files = []
@@ -44,47 +40,42 @@ class EdgarDownloader:
             target_date = datetime.now() - timedelta(days=delta)
             date_str = target_date.strftime("%Y-%m-%d")
 
-            for attempt in range(1, 4):  # 最多 3 次尝试抓取 Atom feed
+            for attempt in range(1, 4):
                 try:
                     self.logger.info(f"[尝试 {attempt}/3] 抓取 Atom Feed: {date_str}")
-                    daily_files = self._download_daily_atom(target_date)
+                    daily_files = self._download_daily_atom(target_date, use_sec_api)
                     downloaded_files.extend(daily_files)
                     break
                 except Exception as e:
                     self.logger.warning(f"[尝试 {attempt}/3] 获取 Atom Feed 失败: {e}")
-                    time.sleep(2 + attempt)  # 增量回退等待时间
+                    time.sleep(2 + attempt)
             else:
-                self.logger.warning(f"日期 {target_date.strftime('%Y%m%d')} 下载失败: ❌ 三次尝试仍然失败，跳过")
+                self.logger.warning(f"❌ 日期 {date_str} 下载失败，跳过")
 
-            # 限流等待，避免触发反爬机制
-            time.sleep(random.uniform(2.5, 4.0))
+            time.sleep(random.uniform(2.5, 4.0))  # 限流
 
         self.logger.info(f"下载完成，共获取 {len(downloaded_files)} 份 Form 4")
         return downloaded_files
 
-    def _download_daily_atom(self, target_date):
+    def _download_daily_atom(self, target_date, use_sec_api=False):
         """
         抓取指定日期的 SEC Atom feed 并解析出 Form 4 XML 文件
-        :param target_date: datetime 类型
-        :return: 下载的文件路径列表
         """
         date_str = target_date.strftime("%Y-%m-%d")
         url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&dateb={date_str}&owner=only&type=4&output=atom"
         self.logger.info(f"抓取 Atom Feed: {url}")
 
-        max_attempts = 3
-        for attempt in range(max_attempts):
+        for attempt in range(3):
             try:
                 resp = requests.get(url, headers=self.headers, timeout=15)
                 resp.raise_for_status()
                 break
             except Exception as e:
-                self.logger.warning(f"[尝试 {attempt + 1}/{max_attempts}] 获取 Atom Feed 失败: {e}")
+                self.logger.warning(f"[尝试 {attempt + 1}/3] 获取 Atom Feed 失败: {e}")
                 sleep(2)
         else:
             raise RuntimeError("❌ 三次尝试仍然失败，跳过")
 
-        # 解析 XML 内容
         root = ET.fromstring(resp.content)
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         entries = root.findall('atom:entry', ns)
@@ -94,21 +85,20 @@ class EdgarDownloader:
 
         for entry in entries:
             try:
-                # 从 link 标签提取实际可访问的 HTML 页面链接
                 html_url = entry.find('atom:link', ns).attrib['href']
-                # 替换 -index.html 为 .xml（EDGAR 规则）
-                form4_url = html_url.replace("-index.html", ".xml")
-        
-                # 提取 accession 编号作为文件名
+                if use_sec_api:
+                    form4_url = SecApiHelper.construct_xml_url(html_url)
+                else:
+                    form4_url = html_url.replace("-index.html", ".xml")
+
                 filename = form4_url.split("/")[-1]
                 local_path = os.path.join(self.data_dir, filename)
-        
+
                 self._download_single_form4(form4_url, local_path)
                 daily_files.append(local_path)
-        
+
             except Exception as e:
                 self.logger.warning(f"单条下载失败: {e}")
-
 
         return daily_files
 
