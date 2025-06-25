@@ -5,10 +5,10 @@
 from shared.logger import setup_logger
 from shared.telegram_notifier import send_telegram_message
 from shared.edgar_downloader import EdgarDownloader
-from shared.form4_parser import Form4Parser
 from shared.data_saver import save_ceo_trades_to_csv
 from shared.data_loader import load_latest_cik_mapping
 from shared.fintel_scraper import FintelScraper
+from shared.form4_parser import Form4Parser  # ✅ 修复导入错误
 import traceback
 
 # ============ 结构评分计算 ============
@@ -44,9 +44,9 @@ def run_ceo_strategy(logger):
         cik_mapping = load_latest_cik_mapping()
         logger.info(f"[DEBUG] 成功加载 CIK 映射: 共 {len(cik_mapping)} 条")
 
-        # 2. 下载近 N 天 Form 4 文件（支持容忍周末延迟）
+        # 2. 下载近 N 天 Form 4 文件（使用 SEC API 提升稳定性）
         downloader = EdgarDownloader(logger)
-        downloaded_files = downloader.download_latest_form4(days_back=7)
+        downloaded_files = downloader.download_latest_form4(days_back=7, use_sec_api=True)
         logger.info(f"[DEBUG] 下载到 Form4 文件数量: {len(downloaded_files)}")
 
         if not downloaded_files:
