@@ -94,26 +94,21 @@ class EdgarDownloader:
 
         for entry in entries:
             try:
-                accession_id_elem = entry.find('atom:accession-number', ns)
-                cik_elem = entry.find('atom:category', ns)
-                # 确保两个关键字段都存在且合法
-                if accession_id_elem is None or cik_elem is None or 'term' not in cik_elem.attrib:
-                    continue
-
-                accession = accession_id_elem.text.strip()
-                cik = cik_elem.attrib['term'].split(':')[-1].zfill(10)
-                accession_nodash = accession.replace("-", "")
-                filename = f"{accession}.xml"
-
-                # 构建 XML 文件实际下载链接（非 HTML）
-                form4_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession_nodash}/{accession}.xml"
+                # 从 link 标签提取实际可访问的 HTML 页面链接
+                html_url = entry.find('atom:link', ns).attrib['href']
+                # 替换 -index.html 为 .xml（EDGAR 规则）
+                form4_url = html_url.replace("-index.html", ".xml")
+        
+                # 提取 accession 编号作为文件名
+                filename = form4_url.split("/")[-1]
                 local_path = os.path.join(self.data_dir, filename)
-
-                # 下载该 XML 文件
+        
                 self._download_single_form4(form4_url, local_path)
                 daily_files.append(local_path)
+        
             except Exception as e:
                 self.logger.warning(f"单条下载失败: {e}")
+
 
         return daily_files
 
