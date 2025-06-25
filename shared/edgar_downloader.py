@@ -1,26 +1,25 @@
 import os
 import requests
-import gzip
-import shutil
+import time
+import random
 from datetime import datetime, timedelta
-from time import sleep
 from xml.etree import ElementTree as ET
 
 class EdgarDownloader:
     """
-    用于从 SEC EDGAR 获取最新 Form 4 报告的下载器
+    用于从 SEC EDGAR 获取最新 Form 4 报告的下载器，带 retry 和限流。
     """
 
     def __init__(self, logger, data_dir='data/insider_ceo'):
         self.logger = logger
         self.data_dir = data_dir
-        self.base_feed_url = "https://www.sec.gov/Archives/edgar/daily-index/xbrl"
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; Quant-ML-Lab-Bot/1.0; +https://github.com/mmdn814)",
+            # ✅ 必须包含声明身份的 User-Agent（SEC 官方要求）
+            "User-Agent": "QuantMLLabBot/1.0 (Contact: mmdn814@gmail.com)",
             "Accept": "application/atom+xml",
             "Accept-Encoding": "gzip, deflate",
             "Connection": "keep-alive",
-            "From": "mmdn814@gmail.com"  # 替换为你注册 GitHub 使用的邮箱
+            "From": "mmdn814@gmail.com"
         }
 
         os.makedirs(self.data_dir, exist_ok=True)
@@ -34,64 +33,81 @@ class EdgarDownloader:
 
         for delta in range(days_back):
             target_date = datetime.now() - timedelta(days=delta)
-            date_str = target_date.strftime("%Y%m%d")
+            date_str = target_date.strftime("%Y-%m-%d")
 
-            try:
-                feed_url = f"https://www.sec.gov/Archives/edgar/daily-index/{target_date.year}/QTR{(target_date.month - 1) // 3 + 1}/index.json"
-                self.logger.info(f"抓取日期: {target_date.strftime('%Y-%m-%d')} -> {feed_url}")
-                daily_files = self._download_daily_atom(target_date)
-                downloaded_files.extend(daily_files)
-            except Exception as e:
-                self.logger.warning(f"日期 {date_str} 下载失败: {e}")
+            for attempt in range(1, 4):  # 最多 3 次尝试
+                try:
+                    self.logger.info(f"[尝试 {attempt}/3] 抓取 Atom Feed: {date_str}")
+                    daily_files = self._download_daily_atom(target_date)
+                    downloaded_files.extend(daily_files)
+                    break
+                except Exception as e:
+                    self.logger.warning(f"[尝试 {attempt}/3] 获取 Atom Feed 失败: {e}")
+                    time.sleep(2 + attempt)  # retry 延迟加长
+            else:
+                self.logger.warning(f"日期 {target_date.strftime('%Y%m%d')} 下载失败: ❌ 三次尝试仍然失败，跳过")
 
-            sleep(1)  # 防止频率过快被SEC限制
+            time.sleep(random.uniform(2.5, 4.0))  # ✅ 限流等待（防止触发 SEC 反爬）
 
         self.logger.info(f"下载完成，共获取 {len(downloaded_files)} 份 Form 4")
         return downloaded_files
 
     def _download_daily_atom(self, target_date):
         """
-        直接读取 SEC 的每日 atom feed (官方API源头)
+        正确读取 SEC 的每日 Atom feed 并下载真实 Form 4 XML 文件
         """
         date_str = target_date.strftime("%Y-%m-%d")
         url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&dateb={date_str}&owner=only&type=4&output=atom"
         self.logger.info(f"抓取 Atom Feed: {url}")
-
-        resp = requests.get(url, headers=self.headers, timeout=15)
-        resp.raise_for_status()
-
+    
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                resp = requests.get(url, headers=self.headers, timeout=15)
+                resp.raise_for_status()
+                break
+            except Exception as e:
+                self.logger.warning(f"[尝试 {attempt + 1}/{max_attempts}] 获取 Atom Feed 失败: {e}")
+                sleep(2)
+        else:
+            raise RuntimeError("❌ 三次尝试仍然失败，跳过")
+    
         # 解析 XML
         root = ET.fromstring(resp.content)
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         entries = root.findall('atom:entry', ns)
         self.logger.info(f"当天发现 {len(entries)} 条 Form 4 记录")
-
+    
         daily_files = []
-
+    
         for entry in entries:
             try:
-                filing_href = entry.find('atom:link', ns).attrib['href']
-                accession = filing_href.split('/')[-2]
-                filename = f"{accession}.xml"
+                # 使用 entry.id 提取 accession 编号
+                accession_url = entry.find('atom:id', ns).text
+                # 例子：https://www.sec.gov/Archives/edgar/data/800262/0000950124-94-000048
+                accession_path = accession_url.replace("https://www.sec.gov/Archives/", "")
+                filename = accession_path.split('/')[-1] + ".xml"
+                form4_url = f"https://www.sec.gov/Archives/{accession_path}.xml"
                 local_path = os.path.join(self.data_dir, filename)
-                self._download_single_form4(filing_href, local_path)
+    
+                # 下载 XML 文件
+                self._download_single_form4(form4_url, local_path)
                 daily_files.append(local_path)
             except Exception as e:
                 self.logger.warning(f"单条下载失败: {e}")
-
+    
         return daily_files
+    
 
     def _download_single_form4(self, filing_url, local_path):
         """
-        下载并保存单份 Form 4 XML 文件
+        下载单份 Form 4 XML 文件
         """
         self.logger.info(f"下载 Form 4: {filing_url}")
         resp = requests.get(filing_url, headers=self.headers, timeout=10)
         resp.raise_for_status()
 
-        # SEC Form 4文件一般直接是 xml，无需解压
         with open(local_path, 'wb') as f:
             f.write(resp.content)
 
         self.logger.info(f"已保存: {local_path}")
-
