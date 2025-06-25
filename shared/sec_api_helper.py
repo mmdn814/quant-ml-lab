@@ -1,34 +1,61 @@
 # sec_api_helper.py
 # 最后修改时间：2025-06-25
-# 功能：通过 SEC API 稳定构建 XML 文件真实下载链接
+# 功能：辅助从 SEC 的 JSON API 获取最新 Form 4 报告，并保存 XML 文件
 
-from urllib.parse import urlparse
+import os
+import requests
+import time
+from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class SecApiHelper:
-    @staticmethod
-    def extract_accession_info(html_url):
-        """
-        从 HTML URL 提取 CIK + accession 编号（去除 index.html 后缀）
-        示例：https://www.sec.gov/Archives/edgar/data/1234567/0001234567-24-000123/index.html
-        """
+    def __init__(self, logger):
+        self.logger = logger
+        self.api_key = os.getenv("SEC_API_KEY")
+        if not self.api_key:
+            raise ValueError("未设置 SEC_API_KEY 环境变量")
+        self.session = requests.Session()
+        self.session.headers.update({
+            "Authorization": f"Bearer {self.api_key}",
+            "User-Agent": "QuantMLLabBot/1.0 (Contact: mmdn814@gmail.com)"
+        })
+
+    def download_recent_form4s(self, save_dir, limit=50):
+        url = f"https://api.sec-api.io/form4?limit={limit}&sort=-filedAt"
+        self.logger.info(f"[SEC API] 获取最近 {limit} 条 Form 4 报告: {url}")
+
         try:
-            parsed = urlparse(html_url)
-            parts = parsed.path.split('/')
-            cik = parts[4]  # data/1234567
-            accession = parts[5].replace("-index.html", "")
-            return cik, accession
-        except:
-            return None, None
+            resp = self.session.get(url, timeout=20)
+            resp.raise_for_status()
+            items = resp.json().get("data", [])
+        except Exception as e:
+            self.logger.error(f"[SEC API] 请求失败: {e}")
+            return []
 
-    @staticmethod
-    def construct_xml_url(html_url):
-        """
-        将 HTML 页面 URL 构造成 XML 文件下载地址
-        """
-        cik, accession = SecApiHelper.extract_accession_info(html_url)
-        if not cik or not accession:
-            return None
+        downloaded_files = []
 
-        acc_no_nodash = accession.replace('-', '')
-        xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_no_nodash}/{accession}.xml"
-        return xml_url
+        for item in items:
+            try:
+                xml_url = item.get("linkToXml")
+                if not xml_url:
+                    continue
+
+                accession = item.get("accessionNumber", "noaccession").replace("-", "")
+                cik = item.get("cik")
+                filename = f"{cik}-{accession}.xml"
+                local_path = os.path.join(save_dir, filename)
+
+                self.logger.info(f"[SEC API] 下载 XML: {xml_url}")
+                r = self.session.get(xml_url, timeout=15)
+                r.raise_for_status()
+                with open(local_path, 'wb') as f:
+                    f.write(r.content)
+
+                downloaded_files.append(local_path)
+                time.sleep(0.5)  # 避免过快请求
+            except Exception as e:
+                self.logger.warning(f"[SEC API] 单条下载失败: {e}")
+
+        return downloaded_files
