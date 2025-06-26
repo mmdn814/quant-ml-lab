@@ -106,3 +106,4 @@ def run_ceo_strategy(logger):
         logger.error("运行异常: " + str(e))
         logger.error(traceback.format_exc())
         send_telegram_message(f"🚨 insider_ceo 策略执行异常: {e}")
+
