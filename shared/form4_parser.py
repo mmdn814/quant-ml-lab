@@ -10,7 +10,7 @@ from shared.edgar_downloader import EdgarDownloader
 from shared.data_saver import save_ceo_trades_to_csv
 from shared.data_loader import load_latest_cik_mapping
 from shared.fintel_scraper import FintelScraper
-from shared.form4_parser import Form4Parser
+
 
 @dataclass
 class CEOTransaction:
