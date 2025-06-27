@@ -221,7 +221,7 @@ class EdgarDownloader:
         return False
 
     def _get_xml_urls_from_index(self, filing_url: str) -> List[str]:
-    def _get_xml_urls_from_index(self, filing_url: str) -> List[str]:
+
         """
         从 filing index 页面解析出实际的 XML 文件链接
         """
