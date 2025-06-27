@@ -1,89 +1,91 @@
-from pathlib import Path
+# 最后修改时间：6/27/25 16:07
+# 功能：解析 SEC Form 4 XML 文件，提取 CEO 的非衍生公开市场买入记录
 
-form4_parser_code = """
-# shared/form4_parser.py
-# 功能：用于解析 SEC Form 4 XML 文件，提取 CEO 买入交易记录
-# 依赖：仅依赖标准库，兼容新版 edgar_downloader 的文件结构
-#最后修改时间6/27/25 15:33
-
+import os
 import xml.etree.ElementTree as ET
 from typing import List, Dict
-import os
 
 class Form4Parser:
     def __init__(self, logger):
         self.logger = logger
 
     def extract_ceo_purchases(self, filepaths: List[str]) -> List[Dict]:
-        \"\"\"从多个 Form 4 文件中提取 CEO 买入交易记录\"\"\"
-        transactions = []
+        """从多个 Form 4 XML 文件中提取 CEO 的公开市场买入记录"""
+        results = []
+
         for path in filepaths:
             try:
-                txns = self._parse_form4_file(path)
-                transactions.extend(txns)
+                trades = self._parse_single_file(path)
+                results.extend(trades)
             except Exception as e:
-                self.logger.error(f"❌ 解析失败: {path} | 错误: {str(e)}", exc_info=True)
-        return transactions
+                self.logger.warning(f"⚠️ 解析失败: {path}，错误: {e}")
+        return results
 
-    def _parse_form4_file(self, filepath: str) -> List[Dict]:
-        \"\"\"解析单个 Form 4 XML 文件，提取 CEO 买入交易\"\"\"
-        tree = ET.parse(filepath)
+    def _parse_single_file(self, path: str) -> List[Dict]:
+        """解析单个 XML 文件，提取所有 CEO 买入记录"""
+        tree = ET.parse(path)
         root = tree.getroot()
 
-        ns = {"ns": "http://www.sec.gov/edgar/document/thirteenf/informationtable"}
-        issuer_node = root.find(".//issuer")
-        if issuer_node is None:
-            raise ValueError("找不到 issuer 节点")
+        # 验证是否为 Form 4 文件
+        if root.tag != "ownershipDocument":
+            raise ValueError("不是有效的 Form 4 文件")
 
-        ticker = issuer_node.findtext("issuerTradingSymbol") or "UNKNOWN"
-        issuer_cik = issuer_node.findtext("issuerCik") or "UNKNOWN"
+        issuer_ticker = root.findtext("issuer/issuerTradingSymbol", default=None)
+        if not issuer_ticker:
+            raise ValueError("未找到 issuerTradingSymbol")
 
-        owner_node = root.find(".//reportingOwner")
-        insider_name = owner_node.findtext("reportingOwnerId/rptOwnerName") or "UNKNOWN"
-        is_ceo = "ceo" in insider_name.lower()
-
+        insider_name = root.findtext("reportingOwner/reportingOwnerId/rptOwnerName", default="N/A")
+        is_ceo = self._is_ceo(root)
         if not is_ceo:
             return []
 
-        # 获取非衍生证券交易
-        result = []
-        for txn in root.findall(".//nonDerivativeTransaction"):
-            code = txn.findtext("transactionCoding/transactionCode", "").strip()
-            if code != "P":  # 'P' 代表买入
+        trade_date = root.findtext("periodOfReport", default="")
+
+        results = []
+        for txn in root.findall("nonDerivativeTable/nonDerivativeTransaction"):
+            code = txn.findtext("transactionCoding/transactionCode", default="")
+            if code != "P":  # 仅提取买入（Purchase）交易
                 continue
 
-            shares = txn.findtext("transactionAmounts/transactionShares/value")
-            price = txn.findtext("transactionAmounts/transactionPricePerShare/value")
-            date = txn.findtext("transactionDate/value")
+            txn_price = txn.findtext("transactionPricePerShare/value")
+            txn_shares = txn.findtext("transactionShares/value")
 
-            if not all([shares, price, date]):
+            try:
+                shares = int(float(txn_shares))
+                price = float(txn_price)
+            except (TypeError, ValueError):
                 continue
 
-            result.append({
-                "ticker": ticker,
+            result = {
+                "ticker": issuer_ticker,
                 "insider_name": insider_name,
-                "shares": int(float(shares)),
-                "price": float(price),
-                "trade_date": date,
-                "filing_url": self._construct_edgar_link_from_path(filepath),
+                "shares": shares,
+                "price": price,
+                "trade_date": trade_date,
+                "filing_url": self._construct_edgar_link_from_path(path),
                 "transaction_type": "Purchase"
-            })
+            }
+            results.append(result)
 
-        return result
+        return results
+
+    def _is_ceo(self, root: ET.Element) -> bool:
+        """判断是否为 CEO 报告人"""
+        positions = root.findall("reportingOwner/reportingOwnerRelationship/officerTitle")
+        for pos in positions:
+            if "ceo" in pos.text.lower():
+                return True
+        return False
 
     def _construct_edgar_link_from_path(self, filepath: str) -> str:
-        \"\"\"根据本地文件路径构造 EDGAR 网页链接\"\"\"
-        filename = os.path.basename(filepath)
+        """从文件路径构建 EDGAR 原始链接"""
+        filename = os.path.basename(filepath).replace(".xml", "")
         try:
-            cik, accession = filename.replace(".xml", "").split("_")
-            clean_accession = ''.join(c for c in accession if c.isdigit())
-            return f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{clean_accession}/primary_doc.xml"
-        except Exception:
+            cik, accession = filename.split("_")
+            accession = ''.join(filter(str.isdigit, accession))
+            if len(accession) != 18:
+                raise ValueError(f"无效的 Accession Number: {accession}")
+            return f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/primary_doc.xml"
+        except Exception as e:
+            self.logger.warning(f"构建 EDGAR URL 失败: {filepath} | 错误: {e}")
             return "N/A"
-"""
-
-file_path = "/mnt/data/form4_parser.py"
-with open(file_path, "w") as f:
-    f.write(form4_parser_code)
-
-file_path
