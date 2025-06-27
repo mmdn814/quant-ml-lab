@@ -1,13 +1,10 @@
-# ✅ 这是优化后的 `edgar_downloader.py`，具备完整注释、清晰结构和更高的健壮性
-#主要特性：
-#结构清晰：模块化设计，职责单一。
-#URL 容错增强：构造多个候选 URL，并自动尝试。
-#内容验证：下载内容必须包含 <ownershipDocument> 和 <issuer> 且长度合理。
-#缓存机制：避免重复请求，提升性能与稳定性。
-#重试机制：指数退避策略，自动恢复临时失败。
-#日志可观测性：详细记录进度与失败原因。
-#参数可配置：超时、重试、间隔、缓存目录均支持自定义。
-#最后修改时间6/27/25 15:29
+# ✅ 修复后的 `edgar_downloader.py` - 解决 XML 文件定位问题
+# 主要修复：
+# 1. 改进 XML 文件 URL 构造策略
+# 2. 先解析 index 页面获取实际的 XML 文件名
+# 3. 增加更多候选 URL 模式
+# 4. 改进错误处理和日志记录
+# 最后修改时间: 6/27/25
 
 import os
 import re
@@ -54,7 +51,7 @@ class EdgarDownloader:
         self.session = requests.Session()
         self.session.headers = {
             "User-Agent": "quant-ml-lab/1.0 (mmdn814@gmail.com)",
-            "Accept": "application/xml, text/xml"
+            "Accept": "application/xml, text/xml, text/html"
         }
 
         self.cache_dir = cache_dir
@@ -67,6 +64,7 @@ class EdgarDownloader:
         Args:
             days_back: 回溯天数
             save_dir: 本地保存目录
+            max_workers: 并发数（暂未使用）
 
         Returns:
             下载成功的 XML 文件路径列表
@@ -81,9 +79,11 @@ class EdgarDownloader:
                 filepath = self._process_entry(entry, save_dir)
                 if filepath:
                     downloaded_files.append(filepath)
-                self.logger.debug(f"[{idx}/{len(entries)}] 下载完成: {os.path.basename(filepath)}")
+                    self.logger.debug(f"[{idx}/{len(entries)}] 下载完成: {os.path.basename(filepath)}")
+                else:
+                    self.logger.warning(f"[{idx}/{len(entries)}] 跳过无效条目")
             except Exception as e:
-                self.logger.error(f"处理条目失败: {e}", exc_info=True)
+                self.logger.error(f"[{idx}/{len(entries)}] 处理条目失败: {e}")
             finally:
                 time.sleep(self.request_interval)
 
@@ -124,9 +124,15 @@ class EdgarDownloader:
         filename = f"{cik}_{accession}.xml"
         filepath = os.path.join(save_dir, filename)
 
+        # 如果文件已存在，跳过下载
+        if os.path.exists(filepath):
+            self.logger.debug(f"文件已存在，跳过: {filename}")
+            return filepath
+
         content = self._download_with_fallback(filing_url, cik, accession)
         if not content:
-            raise ValueError(f"🚫 所有下载方式失败: {filing_url}")
+            self.logger.warning(f"🚫 所有下载方式失败: {filing_url}")
+            return None
 
         with open(filepath, "wb") as f:
             f.write(content)
@@ -134,12 +140,61 @@ class EdgarDownloader:
 
     def _download_with_fallback(self, filing_url: str, cik: str, accession: str) -> Optional[bytes]:
         """尝试多种方式下载 Form 4 XML 内容"""
-        urls = self._generate_candidate_urls(filing_url, cik, accession)
-        for url in urls:
+        # 首先尝试从 index 页面解析实际的 XML 文件名
+        xml_urls = self._get_xml_urls_from_index(filing_url)
+        
+        # 如果解析失败，使用传统的候选 URL 方法
+        if not xml_urls:
+            xml_urls = self._generate_candidate_urls(filing_url, cik, accession)
+        
+        for url in xml_urls:
             content = self._try_download(url)
             if content:
+                self.logger.debug(f"✅ 成功下载: {url}")
                 return content
+        
         return None
+
+    def _get_xml_urls_from_index(self, filing_url: str) -> List[str]:
+        """
+        从 filing index 页面解析出实际的 XML 文件链接
+        """
+        try:
+            self.logger.debug(f"解析 index 页面: {filing_url}")
+            response = self.session.get(filing_url, timeout=self.timeout)
+            if response.status_code != 200:
+                return []
+            
+            soup = BeautifulSoup(response.content, "html.parser")
+            xml_urls = []
+            
+            # 查找所有可能的 XML 文件链接
+            for link in soup.find_all("a", href=True):
+                href = link["href"]
+                # 查找 Form 4 相关的 XML 文件
+                if any(pattern in href.lower() for pattern in [
+                    "wf-form4", "xslform4", "form4.xml", ".xml"
+                ]) and href.endswith(".xml"):
+                    if href.startswith("/"):
+                        full_url = self.base_url + href
+                    else:
+                        full_url = urljoin(filing_url, href)
+                    xml_urls.append(full_url)
+            
+            # 去重并优先选择 Form 4 相关的文件
+            xml_urls = list(set(xml_urls))
+            xml_urls.sort(key=lambda x: (
+                "wf-form4" not in x.lower(),
+                "xslform4" not in x.lower(),
+                "form4" not in x.lower()
+            ))
+            
+            self.logger.debug(f"从 index 页面找到 {len(xml_urls)} 个 XML 候选")
+            return xml_urls
+            
+        except Exception as e:
+            self.logger.debug(f"解析 index 页面失败: {e}")
+            return []
 
     def _try_download(self, url: str) -> Optional[bytes]:
         """执行单次下载尝试，包含缓存机制"""
@@ -149,20 +204,33 @@ class EdgarDownloader:
         # 优先返回缓存
         if os.path.exists(cache_path):
             with open(cache_path, "rb") as f:
-                return f.read()
+                content = f.read()
+                if self._is_valid_form4_xml(content):
+                    return content
 
         for attempt in range(self.max_retries):
             try:
-                self.logger.debug(f"尝试下载: {url}")
+                self.logger.debug(f"尝试下载 [{attempt+1}/{self.max_retries}]: {url}")
                 response = self.session.get(url, timeout=self.timeout)
-                if response.status_code == 200 and self._is_valid_form4_xml(response.content):
-                    with open(cache_path, "wb") as f:
-                        f.write(response.content)
-                    return response.content
+                
+                if response.status_code == 200:
+                    content = response.content
+                    if self._is_valid_form4_xml(content):
+                        # 缓存有效内容
+                        with open(cache_path, "wb") as f:
+                            f.write(content)
+                        return content
+                    else:
+                        self.logger.debug(f"内容验证失败: {url}")
+                else:
+                    self.logger.debug(f"HTTP {response.status_code}: {url}")
+                    
             except Exception as e:
-                wait = 2 ** attempt
-                self.logger.warning(f"下载失败 [{attempt+1}/{self.max_retries}] {url}：{e}，等待 {wait}s")
-                time.sleep(wait)
+                wait = min(2 ** attempt, 10)  # 最大等待 10 秒
+                self.logger.debug(f"下载异常 [{attempt+1}/{self.max_retries}] {url}：{e}")
+                if attempt < self.max_retries - 1:
+                    time.sleep(wait)
+        
         return None
 
     def _extract_identifiers(self, url: str) -> tuple[str, str]:
@@ -175,11 +243,12 @@ class EdgarDownloader:
         match = re.search(r"data/(\d+)/([0-9\-]+)/?", url)
         if not match:
             raise ValueError(f"无法从URL提取标识符: {url}")
+        
         cik = match.group(1).zfill(10)
         accession_raw = match.group(2)
-        accession = ''.join(c for c in accession_raw if c.isdigit())
-        if len(accession) != 18:
-            raise ValueError(f"非法Accession Number格式: {accession}")
+        # 清理 accession number，保留数字和连字符
+        accession = re.sub(r'[^\d\-]', '', accession_raw)
+        
         return cik, accession
 
     def _generate_candidate_urls(self, filing_url: str, cik: str, accession: str) -> List[str]:
@@ -187,10 +256,30 @@ class EdgarDownloader:
         构造多个候选 XML 下载地址以提升容错性
         """
         clean_accession = ''.join(c for c in accession if c.isdigit())
-        return [
-            filing_url.replace("-index.htm", ".xml").replace("-index.html", ".xml"),
-            f"{self.base_url}/Archives/edgar/data/{int(cik)}/{clean_accession}/primary_doc.xml"
-        ]
+        base_path = f"{self.base_url}/Archives/edgar/data/{int(cik)}/{accession}"
+        
+        candidates = []
+        
+        # 方法1: 简单替换 index 后缀
+        candidates.append(filing_url.replace("-index.htm", ".xml").replace("-index.html", ".xml"))
+        
+        # 方法2: 常见的 Form 4 XML 文件名模式
+        candidates.extend([
+            f"{base_path}/wf-form4_{clean_accession}.xml",
+            f"{base_path}/xslForm4_{clean_accession}.xml",
+            f"{base_path}/form4.xml",
+            f"{base_path}/primary_doc.xml",
+            f"{base_path}/{accession}.xml"
+        ])
+        
+        # 方法3: 基于目录的其他可能性
+        candidates.extend([
+            f"{base_path}/doc4.xml",
+            f"{base_path}/ownership.xml"
+        ])
+        
+        # 去重
+        return list(dict.fromkeys(candidates))
 
     def _get_cache_key(self, url: str) -> str:
         """生成 URL 的唯一缓存键"""
@@ -198,5 +287,20 @@ class EdgarDownloader:
 
     def _is_valid_form4_xml(self, content: bytes) -> bool:
         """验证是否为有效的 Form 4 XML"""
-        return b"<ownershipDocument>" in content and b"<issuer>" in content and len(content) > 1024
-
+        if len(content) < 500:  # 太短的内容不太可能是有效的 Form 4
+            return False
+        
+        content_str = content.decode('utf-8', errors='ignore').lower()
+        
+        # 检查必要的 XML 标签
+        required_tags = ["<ownershipdocument>", "<issuer>"]
+        for tag in required_tags:
+            if tag not in content_str:
+                return False
+        
+        # 检查是否确实是 Form 4
+        form4_indicators = ["form4", "form 4", "ownershipdocument"]
+        if not any(indicator in content_str for indicator in form4_indicators):
+            return False
+            
+        return True
