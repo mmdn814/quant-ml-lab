@@ -1,4 +1,4 @@
-# ✅ 修复后的 `edgar_downloader.py` - 解决 XML 文件定位问题
+# ✅ 修复后的 `edgar_downloader.py` - 解决 XML 文件定位问题/claude
 # 主要修复：
 # 1. 改进 XML 文件 URL 构造策略
 # 2. 先解析 index 页面获取实际的 XML 文件名
@@ -110,12 +110,32 @@ class EdgarDownloader:
         return urljoin(self.base_url, "/cgi-bin/browse-edgar?" + urlencode(params))
 
     def _fetch_atom_feed(self, url: str):
-        """请求并解析 Atom Feed"""
+        """请求并解析 Atom Feed，过滤出真正的 Form 4 条目"""
         self.logger.info(f"📡 加载 Feed: {url}")
         response = self.session.get(url, timeout=self.timeout)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, "xml")
-        return soup.find_all("entry")
+        all_entries = soup.find_all("entry")
+        
+        # 过滤出真正的 Form 4 条目
+        form4_entries = []
+        for entry in all_entries:
+            try:
+                # 检查条目标题和摘要是否包含 Form 4 相关信息
+                title = entry.title.get_text() if entry.title else ""
+                summary = entry.summary.get_text() if entry.summary else ""
+                
+                # Form 4 的特征：标题包含 "4"，摘要包含 "Form 4" 或相关关键词
+                if self._is_form4_entry(title, summary):
+                    form4_entries.append(entry)
+                else:
+                    self.logger.debug(f"跳过非 Form 4 条目: {title}")
+            except Exception as e:
+                self.logger.debug(f"解析条目时出错: {e}")
+                continue
+        
+        self.logger.info(f"从 {len(all_entries)} 个条目中筛选出 {len(form4_entries)} 个 Form 4 条目")
+        return form4_entries
 
     def _process_entry(self, entry, save_dir: str) -> Optional[str]:
         """处理单个 Atom 项，尝试下载并保存对应 Form 4 XML"""
@@ -140,21 +160,67 @@ class EdgarDownloader:
 
     def _download_with_fallback(self, filing_url: str, cik: str, accession: str) -> Optional[bytes]:
         """尝试多种方式下载 Form 4 XML 内容"""
+        self.logger.debug(f"开始下载: CIK={cik}, Accession={accession}")
+        
         # 首先尝试从 index 页面解析实际的 XML 文件名
         xml_urls = self._get_xml_urls_from_index(filing_url)
         
         # 如果解析失败，使用传统的候选 URL 方法
         if not xml_urls:
+            self.logger.debug("Index 页面解析失败，使用候选 URL 策略")
             xml_urls = self._generate_candidate_urls(filing_url, cik, accession)
+        else:
+            self.logger.debug(f"从 Index 页面解析出 {len(xml_urls)} 个候选 URL")
         
-        for url in xml_urls:
+        # 记录所有候选 URL
+        for i, url in enumerate(xml_urls):
+            self.logger.debug(f"候选 URL {i+1}: {url}")
+        
+        for i, url in enumerate(xml_urls):
+            self.logger.debug(f"尝试候选 URL {i+1}/{len(xml_urls)}: {url}")
             content = self._try_download(url)
             if content:
                 self.logger.debug(f"✅ 成功下载: {url}")
                 return content
+            else:
+                self.logger.debug(f"❌ 下载失败: {url}")
         
+        self.logger.debug(f"所有 {len(xml_urls)} 个候选 URL 均下载失败")
         return None
 
+    def _is_form4_entry(self, title: str, summary: str) -> bool:
+        """
+        判断 Atom Feed 条目是否为 Form 4
+        
+        Args:
+            title: 条目标题
+            summary: 条目摘要
+            
+        Returns:
+            是否为 Form 4 条目
+        """
+        title_lower = title.lower()
+        summary_lower = summary.lower()
+        
+        # Form 4 的明确标识
+        form4_indicators = [
+            "form 4", "form4", "statement of changes in beneficial ownership"
+        ]
+        
+        # 检查标题和摘要
+        for indicator in form4_indicators:
+            if indicator in title_lower or indicator in summary_lower:
+                return True
+        
+        # 额外检查：标题包含数字 "4" 且摘要包含相关关键词
+        if "4" in title and any(keyword in summary_lower for keyword in [
+            "beneficial ownership", "insider", "section 16", "ownership"
+        ]):
+            return True
+            
+        return False
+
+    def _get_xml_urls_from_index(self, filing_url: str) -> List[str]:
     def _get_xml_urls_from_index(self, filing_url: str) -> List[str]:
         """
         从 filing index 页面解析出实际的 XML 文件链接
@@ -168,26 +234,47 @@ class EdgarDownloader:
             soup = BeautifulSoup(response.content, "html.parser")
             xml_urls = []
             
-            # 查找所有可能的 XML 文件链接
+            # 方法1: 查找文档表格中的 XML 文件
+            for table in soup.find_all("table"):
+                for row in table.find_all("tr"):
+                    cells = row.find_all(["td", "th"])
+                    if len(cells) >= 3:  # 通常有 Seq, Description, Document, Type, Size 列
+                        for cell in cells:
+                            link = cell.find("a", href=True)
+                            if link and link["href"].endswith(".xml"):
+                                href = link["href"]
+                                if href.startswith("/"):
+                                    full_url = self.base_url + href
+                                else:
+                                    full_url = urljoin(filing_url, href)
+                                xml_urls.append(full_url)
+            
+            # 方法2: 查找所有 XML 链接
             for link in soup.find_all("a", href=True):
                 href = link["href"]
-                # 查找 Form 4 相关的 XML 文件
-                if any(pattern in href.lower() for pattern in [
-                    "wf-form4", "xslform4", "form4.xml", ".xml"
-                ]) and href.endswith(".xml"):
+                if href.endswith(".xml"):
                     if href.startswith("/"):
                         full_url = self.base_url + href
                     else:
                         full_url = urljoin(filing_url, href)
                     xml_urls.append(full_url)
             
-            # 去重并优先选择 Form 4 相关的文件
-            xml_urls = list(set(xml_urls))
-            xml_urls.sort(key=lambda x: (
-                "wf-form4" not in x.lower(),
-                "xslform4" not in x.lower(),
-                "form4" not in x.lower()
-            ))
+            # 去重并优先选择主文档
+            xml_urls = list(dict.fromkeys(xml_urls))
+            
+            # 根据文件名排序，优先选择可能的主文档
+            def get_priority(url):
+                filename = url.split("/")[-1].lower()
+                if "primary" in filename or "form4" in filename:
+                    return 0
+                elif filename.startswith("wf-form4") or filename.startswith("xslform4"):
+                    return 1
+                elif filename == "form4.xml":
+                    return 2
+                else:
+                    return 3
+            
+            xml_urls.sort(key=get_priority)
             
             self.logger.debug(f"从 index 页面找到 {len(xml_urls)} 个 XML 候选")
             return xml_urls
@@ -263,20 +350,28 @@ class EdgarDownloader:
         # 方法1: 简单替换 index 后缀
         candidates.append(filing_url.replace("-index.htm", ".xml").replace("-index.html", ".xml"))
         
-        # 方法2: 常见的 Form 4 XML 文件名模式
-        candidates.extend([
-            f"{base_path}/wf-form4_{clean_accession}.xml",
-            f"{base_path}/xslForm4_{clean_accession}.xml",
-            f"{base_path}/form4.xml",
-            f"{base_path}/primary_doc.xml",
-            f"{base_path}/{accession}.xml"
-        ])
+        # 方法2: 基于真实的 SEC 文件结构
+        # 从 filing_url 中提取路径信息
+        url_parts = filing_url.split('/')
+        if len(url_parts) >= 2:
+            accession_part = url_parts[-2]  # 获取 accession number 部分
+            
+            # 常见的 Form 4 XML 文件名模式
+            candidates.extend([
+                f"{base_path}/primary_doc.xml",
+                f"{base_path}/form4.xml",
+                f"{base_path}/{accession_part}.xml",
+                f"{base_path}/wf-form4_{clean_accession}.xml",
+                f"{base_path}/xslForm4_{clean_accession}.xml",
+                f"{base_path}/doc4.xml"
+            ])
         
-        # 方法3: 基于目录的其他可能性
-        candidates.extend([
-            f"{base_path}/doc4.xml",
-            f"{base_path}/ownership.xml"
-        ])
+        # 方法3: 基于 index 文件名构造
+        index_filename = filing_url.split('/')[-1]
+        if index_filename.endswith('-index.htm') or index_filename.endswith('-index.html'):
+            # 移除 -index 后缀，添加 .xml
+            base_filename = index_filename.replace('-index.htm', '').replace('-index.html', '')
+            candidates.append(f"{base_path}/{base_filename}.xml")
         
         # 去重
         return list(dict.fromkeys(candidates))
