@@ -33,5 +33,5 @@ if __name__ == "__main__":
     logger = setup_logger("insider_ceo")
     logger.info("✅ 启动 CEO insider 策略主程序")
     # 调用策略主函数，可以根据需要调整 days_back 和 top_n 参数
-    run_ceo_strategy(logger, days_back=7, top_n=20) 
+    run_ceo_strategy(logger, days_back=14, top_n=20) 
 
