@@ -55,7 +55,7 @@ class EdgarDownloader:
         self.cache_dir = cache_dir
         os.makedirs(cache_dir, exist_ok=True)
 
-    def download_latest_form4(self, days_back: int = 7, save_dir: str = "data/form4") -> List[str]:
+    def download_latest_form4(self, days_back: int = 14, save_dir: str = "data/form4") -> List[str]:
         """
         主函数：下载最近 N 天内的 Form 4 报告
         
