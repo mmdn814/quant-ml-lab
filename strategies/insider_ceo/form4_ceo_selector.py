@@ -41,7 +41,7 @@ def compute_squeeze_score(data: dict) -> int:
     return score
 
 # ============ 策略主函数 ============
-def run_ceo_strategy(logger, days_back: int = 7, top_n: int = 20):
+def run_ceo_strategy(logger, days_back: int = 14, top_n: int = 20):
     logger.info("🚀 启动 insider_ceo 策略")
 
     try:
