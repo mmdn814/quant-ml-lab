@@ -184,26 +184,35 @@ class EdgarDownloader:
         Returns:
             Downloaded XML content, or None.
         """
-        xml_urls = self._get_xml_urls_from_index(filing_url)
-        if not xml_urls:
-            # If no XML URLs were extracted from the index page, generate candidate URLs
-            xml_urls = self._generate_candidate_urls(filing_url, cik, accession)
+        # First, try to get XML URLs by parsing the index page
+        xml_urls_from_index = self._get_xml_urls_from_index(filing_url)
+        if xml_urls_from_index:
+            self.logger.debug(f"从索引页 {filing_url} 提取到 XML 链接: {xml_urls_from_index}")
+            # Try these extracted URLs first
+            for url in xml_urls_from_index:
+                content = self._try_download(url)
+                if content:
+                    return content
+        else:
+            self.logger.debug(f"未能从索引页 {filing_url} 提取到有效 XML 链接。")
 
-        # Ensure there is at least one URL to try, even fallback might be empty
-        if not xml_urls:
-            self.logger.warning(f"无法为 {filing_url} 生成任何候选 XML 下载链接。")
-            return None
+        # If index page parsing failed or didn't yield a downloadable file, use generated candidates
+        generated_xml_urls = self._generate_candidate_urls(filing_url, cik, accession)
+        if generated_xml_urls:
+            self.logger.debug(f"生成了候选 XML 链接: {generated_xml_urls}")
+            for url in generated_xml_urls:
+                content = self._try_download(url)
+                if content:
+                    return content
+        else:
+            self.logger.warning(f"未能为 {filing_url} 生成任何候选 XML 下载链接。")
 
-        for url in xml_urls:
-            content = self._try_download(url)
-            if content:
-                return content
         return None
 
     def _get_xml_urls_from_index(self, filing_url: str) -> List[str]:
         """
         尝试解析 index 页面，提取 XML 文件真实路径。
-        修改：更智能地处理从索引页获取的XML URL，确保它直接位于归档路径下，
+        修改：确保从索引页获取的XML URL直接位于归档路径下，
         去除可能存在的子目录路径，如 "xslF345X05/"。
 
         Returns:
@@ -218,39 +227,32 @@ class EdgarDownloader:
             soup = BeautifulSoup(response.content, "html.parser") 
             xml_urls = []
 
-            # Extract CIK and Accession from the filing_url to construct the expected base path
+            # 1. 从 filing_url 中提取 CIK 和 Accession Number，以构建预期的标准归档路径
             # Example filing_url: https://www.sec.gov/Archives/edgar/data/17313/000001731325000061/0000017313-25-000061-index.htm
-            filing_url_parts = filing_url.split('/')
-            
             try:
-                # Find the "data" segment and then CIK and Accession
-                data_idx = filing_url_parts.index('data')
-                cik_from_url = filing_url_parts[data_idx + 1]
-                accession_from_url = filing_url_parts[data_idx + 2]
+                cik, accession = self._extract_identifiers(filing_url)
                 # Construct the direct base path for the XML files
                 # This should be the path where primary XMLs usually reside
                 expected_base_archive_path = urljoin(self.base_url, 
-                                                     f"/Archives/edgar/data/{cik_from_url}/{accession_from_url}/")
-            except (ValueError, IndexError):
-                self.logger.warning(f"无法从 filing URL {filing_url} 提取 CIK 和 Accession，无法确定预期XML基路径。将使用 filing_url 的基路径作为回退。")
-                # Fallback: if CIK/Accession cannot be extracted from the URL structure, use the base of the filing URL itself.
-                # This might still lead to subdirectories if the filing_url itself contains them.
-                parsed_filing_url = urlparse(filing_url)
-                expected_base_archive_path = f"{parsed_filing_url.scheme}://{parsed_filing_url.netloc}{os.path.dirname(parsed_filing_url.path)}/"
+                                                     f"/Archives/edgar/data/{int(cik)}/{accession}/")
+                self.logger.debug(f"构建预期归档基路径: {expected_base_archive_path}")
+            except ValueError:
+                self.logger.warning(f"无法从 filing URL {filing_url} 提取 CIK 和 Accession，无法确定预期XML基路径。跳过此索引页解析。")
+                return [] # If identifiers can't be extracted, we can't reliably form the base path.
 
 
             for link in soup.find_all("a", href=True):
                 href = link["href"]
-                # Look for links ending in .xml and containing "form" (heuristic to exclude stylesheets like .xsl)
-                # Convert href to lowercase for robust matching
-                if href.lower().endswith(".xml") and "form" in href.lower():
-                    # Get the actual filename from the href (e.g., wk-form4_1750708963.xml from xslF345X05/wk-form4_1750708963.xml)
+                # Look for links ending in .xml
+                if href.lower().endswith(".xml"):
+                    # Extract only the base filename from the href (e.g., "doc4.xml" from "xslF345X05/doc4.xml")
                     xml_filename = os.path.basename(href) 
 
-                    # Construct the full URL directly under the expected base archive path.
-                    # This explicitly removes any intermediate directories from the href.
+                    # Construct the full URL by joining the base archive path with the extracted filename.
+                    # This ensures the XML is always sought directly under the CIK/Accession directory.
                     full_url = urljoin(expected_base_archive_path, xml_filename)
                     xml_urls.append(full_url)
+                    self.logger.debug(f"索引页找到XML链接: {full_url}")
 
             # Use dict.fromkeys to remove duplicates and convert back to list
             return list(dict.fromkeys(xml_urls))
@@ -283,39 +285,44 @@ class EdgarDownloader:
 
     def _generate_candidate_urls(self, filing_url: str, cik: str, accession: str) -> List[str]:
         """
-        When the index page cannot be parsed, constructs all common Form 4 XML filenames as candidate links.
+        在无法解析 index 页时，拼出所有常见 Form 4 XML 文件名作为候选链接
+        优化尝试顺序，优先尝试更常见的名称。
         """
-        # Clean the accession number, keeping only digits for filename construction
         clean_accession = ''.join(c for c in accession if c.isdigit())
-        # Construct the base path, converting CIK to int to remove leading zeros, then back to string
-        base_path = f"{self.base_url}/Archives/edgar/data/{int(cik)}/{accession}"
+        # Ensure trailing slash for urljoin
+        base_path = f"{self.base_url}/Archives/edgar/data/{int(cik)}/{accession}/" 
         
         candidate_urls = [
-            # 1. Try directly replacing -index.htm/.html with .xml in the index page URL
+            # 1. Most common, explicit names (prioritize these based on observation)
+            f"{base_path}primary_doc.xml",
+            f"{base_path}form4.xml",
+            f"{base_path}doc4.xml",
+            f"{base_path}ownership.xml", # Added based on user feedback
+
+            # 2. Common SEC-generated filename patterns involving the clean accession
+            f"{base_path}wk-form4_{clean_accession}.xml",
+            f"{base_path}xslForm4_{clean_accession}.xml",
+            f"{base_path}nc-form4_{clean_accession}.xml",
+            f"{base_path}e{clean_accession}.xml",
+
+            # 3. Direct accession number as filename (less common for Form4 primary XMLs, but possible)
+            f"{base_path}{accession}.xml", # Original accession with hyphens
+            f"{base_path}{clean_accession}.xml", # Purely numeric accession
+
+            # 4. Fallback for simple replacement of index.htm with .xml (this often generates ACCESSION-YY-XXXXXX.xml)
+            # This is less reliable but kept as a last resort.
             filing_url.replace("-index.htm", ".xml").replace("-index.html", ".xml"),
-            # 2. Common generic XML filenames
-            f"{base_path}/primary_doc.xml",
-            f"{base_path}/form4.xml",
-            f"{base_path}/doc4.xml",
-            # 3. XML with accession number as filename
-            f"{base_path}/{accession}.xml", # Original accession with hyphens
-            f"{base_path}/{clean_accession}.xml", # Purely numeric accession
-            # 4. Common SEC-generated filename patterns
-            f"{base_path}/wf-form4_{clean_accession}.xml",
-            f"{base_path}/xslForm4_{clean_accession}.xml",
-            f"{base_path}/nc-form4_{clean_accession}.xml", # Another common pattern
-            f"{base_path}/e{clean_accession}.xml" # Pattern starting with 'e'
         ]
         # Use dict.fromkeys to remove duplicates and preserve order
         return list(dict.fromkeys(candidate_urls))
 
     def _try_download(self, url: str) -> Optional[bytes]:
         """
-        Downloads a single link, supports caching and up to N retries.
-        Adds XML content validity check.
+        单链接下载，支持缓存和最多 N 次重试
+        新增 XML 内容有效性校验。
 
         Returns:
-            Successful binary content or None.
+            成功的二进制内容或 None
         """
         cache_key = hashlib.md5(url.encode()).hexdigest()
         cache_path = os.path.join(self.cache_dir, cache_key)
@@ -331,9 +338,13 @@ class EdgarDownloader:
                 except ET.ParseError:
                     self.logger.warning(f"缓存文件 {os.path.basename(url)} XML 格式无效，尝试重新下载。")
                     os.remove(cache_path) # Delete invalid cached file
-
+                except Exception as e: # Catch other errors during cache read/validation
+                    self.logger.warning(f"读取或验证缓存文件 {os.path.basename(url)} 失败: {e}，尝试重新下载。")
+                    os.remove(cache_path)
+                    
         for attempt in range(self.max_retries):
             try:
+                self.logger.debug(f"尝试下载: {url} (尝试 {attempt + 1}/{self.max_retries})")
                 response = self.session.get(url, timeout=self.timeout)
                 response.raise_for_status() # Check HTTP status code (4xx, 5xx)
 
@@ -349,6 +360,7 @@ class EdgarDownloader:
                 # If XML content is valid, save to cache
                 with open(cache_path, "wb") as f:
                     f.write(content)
+                self.logger.debug(f"成功下载并验证: {url}")
                 return content
             except requests.exceptions.RequestException as e: # Catch requests library errors (network issues, timeouts, HTTP errors, etc.)
                 self.logger.warning(f"下载 {url} 失败: {e}，尝试重试 ({attempt + 1}/{self.max_retries})")
