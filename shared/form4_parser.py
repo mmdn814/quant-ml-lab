@@ -1,4 +1,4 @@
-# 最后修改时间：6/30/25 17:07
+# 最后修改时间：6/27/25 16:07
 # 功能：解析 SEC Form 4 XML 文件，提取 CEO 的非衍生公开市场买入记录
 
 import os
@@ -14,6 +14,7 @@ class Form4Parser:
         results = []
 
         for path in filepaths:
+            self.logger.debug(f"开始解析文件: {os.path.basename(path)}")
             try:
                 trades = self._parse_single_file(path)
                 results.extend(trades)
@@ -23,6 +24,7 @@ class Form4Parser:
                 self.logger.warning(f"⚠️ 数据提取失败: {os.path.basename(path)}，错误: {e}")
             except Exception as e: # 捕获其他未知错误
                 self.logger.warning(f"⚠️ 解析失败（未知错误）: {os.path.basename(path)}，错误: {e}")
+            self.logger.debug(f"文件 {os.path.basename(path)} 解析完成。")
         return results
 
     def _parse_single_file(self, path: str) -> List[Dict]:
@@ -31,33 +33,40 @@ class Form4Parser:
         root = tree.getroot()
 
         # 验证是否为 Form 4 文件
-        # 注意：这里假设根标签一定是 "ownershipDocument"。如果SEC有其他根标签，可能需要调整。
         if root.tag != "ownershipDocument":
+            self.logger.debug(f"文件 {os.path.basename(path)} 不是有效的 Form 4 文件，根标签为: {root.tag}。跳过。")
             raise ValueError(f"不是有效的 Form 4 文件，根标签为: {root.tag}")
 
         issuer_ticker = root.findtext("issuer/issuerTradingSymbol", default=None)
         if not issuer_ticker:
-            # 某些Form 4可能没有ticker，这可能是正常情况或需要根据实际情况决定是否跳过
-            self.logger.debug(f"文件 {os.path.basename(path)} 未找到 issuerTradingSymbol")
+            self.logger.debug(f"文件 {os.path.basename(path)} 未找到 issuerTradingSymbol。跳过。")
             return [] # 如果没有ticker，则无法进行后续处理
 
         insider_name = root.findtext("reportingOwner/reportingOwnerId/rptOwnerName", default="N/A")
         
         # 判断是否为 CEO 报告人
         is_ceo = self._is_ceo(root)
+        self.logger.debug(f"文件 {os.path.basename(path)} - 报告人: {insider_name}, 是否为CEO: {is_ceo}")
         if not is_ceo:
+            self.logger.debug(f"文件 {os.path.basename(path)} 报告人 {insider_name} 不是CEO。跳过。")
             return []
 
         trade_date = root.findtext("periodOfReport", default="")
         if not trade_date:
-            self.logger.debug(f"文件 {os.path.basename(path)} 未找到 periodOfReport")
+            self.logger.debug(f"文件 {os.path.basename(path)} 未找到 periodOfReport。使用N/A。")
             trade_date = "N/A"
 
         results = []
         # 查找非衍生品交易表
-        for txn in root.findall("nonDerivativeTable/nonDerivativeTransaction"):
+        non_derivative_transactions = root.findall("nonDerivativeTable/nonDerivativeTransaction")
+        self.logger.debug(f"文件 {os.path.basename(path)} 找到 {len(non_derivative_transactions)} 条非衍生品交易。")
+
+        for idx, txn in enumerate(non_derivative_transactions):
             code = txn.findtext("transactionCoding/transactionCode", default="").strip().upper()
+            self.logger.debug(f"文件 {os.path.basename(path)} - 交易 {idx+1}: TransactionCode={code}")
+
             if code != "P":  # 仅提取买入（Purchase）交易, 'P'代表购买
+                self.logger.debug(f"文件 {os.path.basename(path)} - 交易 {idx+1}: 非买入交易 ({code})。跳过。")
                 continue
 
             # 交易价格和股数可能缺失或为空
@@ -70,11 +79,11 @@ class Form4Parser:
                 
                 # 检查是否为有效的买入交易（股数和价格都应大于0）
                 if shares <= 0 or price <= 0:
-                    self.logger.debug(f"文件 {os.path.basename(path)} 中发现非正股数或价格的买入交易，跳过。Shares: {shares}, Price: {price}")
+                    self.logger.debug(f"文件 {os.path.basename(path)} - 交易 {idx+1}: 股数或价格非正值。Shares: {shares}, Price: {price}。跳过。")
                     continue
 
             except (TypeError, ValueError) as e:
-                self.logger.debug(f"文件 {os.path.basename(path)} 中交易价格或股数转换失败: Price='{txn_price_str}', Shares='{txn_shares_str}', 错误: {e}")
+                self.logger.debug(f"文件 {os.path.basename(path)} - 交易 {idx+1}: 交易价格或股数转换失败: Price='{txn_price_str}', Shares='{txn_shares_str}', 错误: {e}。跳过。")
                 continue # 数据格式不正确，跳过此交易
 
             result = {
@@ -87,6 +96,7 @@ class Form4Parser:
                 "transaction_type": "Purchase"
             }
             results.append(result)
+            self.logger.debug(f"文件 {os.path.basename(path)} - 交易 {idx+1}: 成功识别为CEO买入。")
 
         return results
 
@@ -94,17 +104,21 @@ class Form4Parser:
         """判断是否为 CEO 报告人"""
         # 考虑多种可能表示CEO的职位字符串，并转换为小写进行匹配
         ceo_keywords = ["chief executive officer", "ceo", "president and chief executive officer", 
-                        "chief exective officer", "principal executive officer"] # 常见拼写错误也考虑
+                        "chief exective officer", "principal executive officer", "co-chief executive officer"] # 增加 co-ceo
         
         # 查找所有 officerTitle 或 officerTitleText 标签
         # SEC文档中可能使用officerTitleText代替officerTitle
         positions = root.findall("reportingOwner/reportingOwnerRelationship/officerTitle")
         positions.extend(root.findall("reportingOwner/reportingOwnerRelationship/officerTitleText"))
 
+        found_titles = []
         for pos in positions:
             if pos.text: # 确保文本内容不为空
+                found_titles.append(pos.text)
                 if any(keyword in pos.text.lower() for keyword in ceo_keywords):
+                    self.logger.debug(f"识别到CEO职位关键词: '{pos.text}'")
                     return True
+        self.logger.debug(f"未识别到CEO职位关键词。找到的职位: {found_titles}")
         return False
 
     def _construct_edgar_link_from_path(self, filepath: str) -> str:
@@ -112,42 +126,12 @@ class Form4Parser:
         filename = os.path.basename(filepath).replace(".xml", "")
         try:
             cik, accession_full = filename.split("_")
-            # 原始 accession_full 可能是 000001731325000061 这样的，需要转换回 SEC URL 格式
-            # SEC URL 格式通常是 YYYYMMDD-NN-XXXXXX，或只有纯数字
-            # 从文件命名来看，accession_full 是纯数字，需要处理成 000...0061 这种形式
             
-            # SEC filing URL 的 accession format: 0001127602-25-017854
-            # 您的文件名格式: {cik}_{pure_digits_accession}
-            # 我们需要把 pure_digits_accession 转换为 SEC URL 格式
-
-            # 假设 filepath 中的 accession 是纯数字，需要重新格式化
-            # 例如 "000001731325000061" -> "0000017313-25-000061" (这是一个示例转换逻辑，可能需要根据实际SEC URL模式调整)
-            
-            # 重新从 filename 中提取 accession number，并尝试适配 SEC 格式
-            # 这是从 Form 4 自身 URL 格式反推的，通常是 YYYYMMDD + document_sequence_number
-            # 考虑到您下载的 filing_url 格式是：
-            # https://www.sec.gov/Archives/edgar/data/8858/000112760225017854/0001127602-25-017854-index.htm
-            # 这里的 000112760225017854 是 accession number 的纯数字形式
-            # 我们需要将其转换为 0001127602-25-017854 这种带横线的形式
-            
-            # SEC accession number 的标准格式是 10位 CIK + 2位年 + 8位月日 + 6位序列号
-            # 或者更常见的是 10位数字 + 8位日期 + 6位序列号
-            # filing_url 中的 accession_number 是 0001127602-25-017854
-            # 对应的文件名中是 000112760225017854
-            
-            # 如果文件名中的 accession_full 是纯数字且长度为18 (例如000112760225017854)
             if len(accession_full) == 18 and accession_full.isdigit():
-                # 转换为 SEC 档案路径中的格式：前10位-2位-后6位
                 sec_accession = f"{accession_full[:10]}-{accession_full[10:12]}-{accession_full[12:]}"
             else:
-                # 否则，使用原始的 accession_full
                 sec_accession = accession_full 
 
-            # 注意：这里我们尝试指向 primary_doc.xml，因为这是最标准的报告XML文件
-            # 但实际上，如果下载时是从其他XML文件名（如form4.xml, wk-form4_xxx.xml）下载的，
-            # 那么这个链接可能会导致404，如果需要精确匹配，需要调整存储文件名
-            # 当前的 _download_with_fallback 会尝试多种，而这里只提供一个通用链接。
-            # 对于展示给用户的链接，通常 primary_doc.xml 是一个不错的选择
             return f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{sec_accession}/primary_doc.xml"
         except Exception as e:
             self.logger.warning(f"构建 EDGAR URL 失败: {filepath} | 错误: {e}")
