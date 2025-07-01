@@ -101,23 +101,36 @@ class Form4Parser:
         return results
 
     def _is_ceo(self, root: ET.Element) -> bool:
-        """判断是否为 CEO 报告人"""
-        # 考虑多种可能表示CEO的职位字符串，并转换为小写进行匹配
-        ceo_keywords = ["chief executive officer", "ceo", "president and chief executive officer", 
-                        "chief exective officer", "principal executive officer", "co-chief executive officer"] # 增加 co-ceo
+        """
+        判断是否为 CEO 报告人。
+        增强识别逻辑，使用更灵活的关键词匹配。
+        """
+        # 扩展 CEO 关键词列表，包括常见缩写、变体和复合职位
+        ceo_keywords = [
+            "chief executive officer", "ceo", "president and chief executive officer", 
+            "chief exective officer", "principal executive officer", "co-chief executive officer",
+            "chief operating officer and chief executive officer", # 常见复合职位
+            "chief executive officer and president",
+            "chief executive officer and chairman",
+            "principal officer", # 有时也指CEO
+            "c.e.o." # 考虑带点的缩写
+        ]
         
         # 查找所有 officerTitle 或 officerTitleText 标签
-        # SEC文档中可能使用officerTitleText代替officerTitle
         positions = root.findall("reportingOwner/reportingOwnerRelationship/officerTitle")
         positions.extend(root.findall("reportingOwner/reportingOwnerRelationship/officerTitleText"))
 
         found_titles = []
         for pos in positions:
             if pos.text: # 确保文本内容不为空
-                found_titles.append(pos.text)
-                if any(keyword in pos.text.lower() for keyword in ceo_keywords):
-                    self.logger.debug(f"识别到CEO职位关键词: '{pos.text}'")
+                normalized_title = pos.text.lower().strip() # 转换为小写并去除首尾空格
+                found_titles.append(pos.text) # 记录原始标题
+
+                # 使用更灵活的匹配：只要标题中包含任何一个关键词，就认为是CEO
+                if any(keyword in normalized_title for keyword in ceo_keywords):
+                    self.logger.debug(f"识别到CEO职位关键词: '{pos.text}' (匹配到: {normalized_title})")
                     return True
+        
         self.logger.debug(f"未识别到CEO职位关键词。找到的职位: {found_titles}")
         return False
 
