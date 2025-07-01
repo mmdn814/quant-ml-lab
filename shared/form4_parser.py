@@ -32,46 +32,57 @@ class Form4Parser:
         tree = ET.parse(path)
         root = tree.getroot()
 
+        # --- 关键修改：处理 XML 命名空间 ---
+        # 提取默认命名空间，如果存在
+        namespace = ''
+        if '}' in root.tag:
+            namespace = root.tag.split('}')[0] + '}'
+        self.logger.debug(f"文件 {os.path.basename(path)} 识别到命名空间: '{namespace}'")
+        # --- 命名空间处理结束 ---
+
         # 验证是否为 Form 4 文件
-        if root.tag != "ownershipDocument":
+        # 注意：这里需要使用带命名空间的标签名进行验证
+        if root.tag != f"{namespace}ownershipDocument":
             self.logger.debug(f"文件 {os.path.basename(path)} 不是有效的 Form 4 文件，根标签为: {root.tag}。跳过。")
             raise ValueError(f"不是有效的 Form 4 文件，根标签为: {root.tag}")
 
-        issuer_ticker = root.findtext("issuer/issuerTradingSymbol", default=None)
+        # 使用带命名空间的路径查找元素
+        issuer_ticker = root.findtext(f"{namespace}issuer/{namespace}issuerTradingSymbol", default=None)
         if not issuer_ticker:
             self.logger.debug(f"文件 {os.path.basename(path)} 未找到 issuerTradingSymbol。跳过。")
-            return [] # 如果没有ticker，则无法进行后续处理
+            return [] 
 
-        insider_name = root.findtext("reportingOwner/reportingOwnerId/rptOwnerName", default="N/A")
+        insider_name = root.findtext(f"{namespace}reportingOwner/{namespace}reportingOwnerId/{namespace}rptOwnerName", default="N/A")
         
         # 判断是否为 CEO 报告人
-        is_ceo = self._is_ceo(root)
+        is_ceo = self._is_ceo(root, namespace) # 传递命名空间给 _is_ceo
         self.logger.debug(f"文件 {os.path.basename(path)} - 报告人: {insider_name}, 是否为CEO: {is_ceo}")
         if not is_ceo:
             self.logger.debug(f"文件 {os.path.basename(path)} 报告人 {insider_name} 不是CEO。跳过。")
             return []
 
-        trade_date = root.findtext("periodOfReport", default="")
+        trade_date = root.findtext(f"{namespace}periodOfReport", default="")
         if not trade_date:
             self.logger.debug(f"文件 {os.path.basename(path)} 未找到 periodOfReport。使用N/A。")
             trade_date = "N/A"
 
         results = []
-        # 查找非衍生品交易表
-        non_derivative_transactions = root.findall("nonDerivativeTable/nonDerivativeTransaction")
+        # 查找非衍生品交易表，使用带命名空间的路径
+        non_derivative_transactions = root.findall(f"{namespace}nonDerivativeTable/{namespace}nonDerivativeTransaction")
         self.logger.debug(f"文件 {os.path.basename(path)} 找到 {len(non_derivative_transactions)} 条非衍生品交易。")
 
         for idx, txn in enumerate(non_derivative_transactions):
-            code = txn.findtext("transactionCoding/transactionCode", default="").strip().upper()
+            # 交易子元素也需要使用命名空间
+            code = txn.findtext(f"{namespace}transactionCoding/{namespace}transactionCode", default="").strip().upper()
             self.logger.debug(f"文件 {os.path.basename(path)} - 交易 {idx+1}: TransactionCode={code}")
 
             if code != "P":  # 仅提取买入（Purchase）交易, 'P'代表购买
                 self.logger.debug(f"文件 {os.path.basename(path)} - 交易 {idx+1}: 非买入交易 ({code})。跳过。")
                 continue
 
-            # 交易价格和股数可能缺失或为空
-            txn_price_str = txn.findtext("transactionPricePerShare/value")
-            txn_shares_str = txn.findtext("transactionShares/value")
+            # 交易价格和股数也需要使用命名空间
+            txn_price_str = txn.findtext(f"{namespace}transactionAmounts/{namespace}transactionPricePerShare/{namespace}value")
+            txn_shares_str = txn.findtext(f"{namespace}transactionAmounts/{namespace}transactionShares/{namespace}value")
 
             try:
                 shares = int(float(txn_shares_str)) if txn_shares_str else 0
@@ -100,10 +111,10 @@ class Form4Parser:
 
         return results
 
-    def _is_ceo(self, root: ET.Element) -> bool:
+    def _is_ceo(self, root: ET.Element, namespace: str) -> bool: # 接收命名空间参数
         """
         判断是否为 CEO 报告人。
-        增强识别逻辑，使用更灵活的关键词匹配。
+        增强识别逻辑，使用更灵活的关键词匹配，并处理命名空间。
         """
         # 扩展 CEO 关键词列表，包括常见缩写、变体和复合职位
         ceo_keywords = [
@@ -116,9 +127,9 @@ class Form4Parser:
             "c.e.o." # 考虑带点的缩写
         ]
         
-        # 查找所有 officerTitle 或 officerTitleText 标签
-        positions = root.findall("reportingOwner/reportingOwnerRelationship/officerTitle")
-        positions.extend(root.findall("reportingOwner/reportingOwnerRelationship/officerTitleText"))
+        # 查找所有 officerTitle 或 officerTitleText 标签，并使用命名空间
+        positions = root.findall(f"{namespace}reportingOwner/{namespace}reportingOwnerRelationship/{namespace}officerTitle")
+        positions.extend(root.findall(f"{namespace}reportingOwner/{namespace}reportingOwnerRelationship/{namespace}officerTitleText"))
 
         found_titles = []
         for pos in positions:
