@@ -1,11 +1,12 @@
 # ✅ 文件：shared/daily_index_parser.py
 # 功能：用于解析 SEC 每日 master.idx 文件，提取 Form 4 filing 的 accession 列表
 
+import os
 import requests
 from datetime import datetime
 from typing import List, Tuple
 
-def get_form4_accessions_from_index(date: datetime) -> List[Tuple[str, str, str]]:
+def get_form4_accessions_from_index(date: datetime, cache_dir: str = ".cache") -> List[Tuple[str, str, str]]:
     """
     获取指定日期所有 Form 4 报告的 CIK、Accession 和完整 filing URL
     返回：List[(CIK, Accession, Filing URL)]
@@ -14,13 +15,22 @@ def get_form4_accessions_from_index(date: datetime) -> List[Tuple[str, str, str]
     url = f"https://www.sec.gov/Archives/edgar/daily-index/{date.year}/{quarter}/master.{date.strftime('%Y%m%d')}.idx"
 
     headers = {"User-Agent": "quant-ml-lab/1.0 (mmdn814@gmail.com)"}
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        res.raise_for_status()
-    except requests.RequestException:
-        return []
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, f"master.{date.strftime('%Y%m%d')}.idx")
 
-    lines = res.text.splitlines()
+    if os.path.exists(cache_path):
+        with open(cache_path, "r") as f:
+            lines = f.readlines()
+    else:
+        try:
+            res = requests.get(url, headers=headers, timeout=10)
+            res.raise_for_status()
+            lines = res.text.splitlines()
+            with open(cache_path, "w") as f:
+                f.write(res.text)
+        except requests.RequestException:
+            return []
+
     start = False
     results = []
     for line in lines:
