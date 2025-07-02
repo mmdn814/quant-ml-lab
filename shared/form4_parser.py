@@ -1,4 +1,4 @@
-# 最后修改时间：6/27/25 16:07
+# 最后修改时间：7/2/25 10:05
 # 功能：解析 SEC Form 4 XML 文件，提取 CEO 的非衍生公开市场买入记录
 
 import os
@@ -74,15 +74,16 @@ class Form4Parser:
         for idx, txn in enumerate(non_derivative_transactions):
             # 交易子元素也需要使用命名空间
             code = txn.findtext(f"{namespace}transactionCoding/{namespace}transactionCode", default="").strip().upper()
-            self.logger.debug(f"文件 {os.path.basename(path)} - 交易 {idx+1}: TransactionCode={code}")
+            
+            # 交易价格和股数也需要使用命名空间，注意它们在 transactionAmounts 下
+            txn_price_str = txn.findtext(f"{namespace}transactionAmounts/{namespace}transactionPricePerShare/{namespace}value")
+            txn_shares_str = txn.findtext(f"{namespace}transactionAmounts/{namespace}transactionShares/{namespace}value")
+
+            self.logger.debug(f"文件 {os.path.basename(path)} - 交易 {idx+1}: TransactionCode={code}, Shares='{txn_shares_str}', Price='{txn_price_str}'")
 
             if code != "P":  # 仅提取买入（Purchase）交易, 'P'代表购买
                 self.logger.debug(f"文件 {os.path.basename(path)} - 交易 {idx+1}: 非买入交易 ({code})。跳过。")
                 continue
-
-            # 交易价格和股数也需要使用命名空间
-            txn_price_str = txn.findtext(f"{namespace}transactionAmounts/{namespace}transactionPricePerShare/{namespace}value")
-            txn_shares_str = txn.findtext(f"{namespace}transactionAmounts/{namespace}transactionShares/{namespace}value")
 
             try:
                 shares = int(float(txn_shares_str)) if txn_shares_str else 0
