@@ -3,12 +3,12 @@ name: Run Insider CEO Strategy
 on:
   workflow_dispatch:  # ✅ 手动触发
   schedule:
-    - cron: "30 12 * * 1-5"  # ✅ 美东时间 08:30 触发
+    - cron: "30 12 * * 1-5"  # ✅ 每周一到五 美东时间08:30触发
 
 jobs:
   run-insider-ceo:
     runs-on: ubuntu-latest
-    environment: TELEGRAM_TOKEN  # ✅ 指定环境名，匹配你设置 Secrets 的 Environment 名称
+    environment: TELEGRAM_TOKEN  # ✅ 匹配你设置 Secrets 的 Environment 名称
 
     steps:
       - name: Checkout Repo
@@ -19,7 +19,12 @@ jobs:
         with:
           python-version: 3.11
 
-      - name: Install Dependencies
+      - name: Install System Dependencies (for lxml)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxml2-dev libxslt-dev python3-dev
+
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
@@ -39,4 +44,3 @@ jobs:
         with:
           name: ceo_results_csv
           path: data/insider_ceo/*.csv
-
