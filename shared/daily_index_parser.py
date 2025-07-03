@@ -3,8 +3,11 @@
 
 import os
 import requests
+import logging
 from datetime import datetime, timedelta
 from typing import List, Tuple
+
+logger = logging.getLogger("insider_ceo")
 
 def get_form4_accessions_from_index(date: datetime, cache_dir: str = ".cache") -> List[Tuple[str, str, str]]:
     """
@@ -25,21 +28,23 @@ def get_form4_accessions_from_index(date: datetime, cache_dir: str = ".cache") -
     cache_path = os.path.join(cache_dir, f"master.{date.strftime('%Y%m%d')}.idx")
 
     if os.path.exists(cache_path):
+        logger.info(f"📂 使用缓存的 master.idx 文件: {cache_path}")
         with open(cache_path, "r") as f:
             lines = f.readlines()
     else:
         try:
+            logger.info(f"🌐 下载 master.idx 文件: {url}")
             res = requests.get(url, headers=headers, timeout=10)
             res.raise_for_status()
             lines = res.text.splitlines()
             with open(cache_path, "w") as f:
                 f.write(res.text)
         except requests.RequestException as e:
-            print(f"❌ 下载失败: {url}")
-            print(f"原因: {e}")
+            logger.error(f"❌ 下载失败: {url}")
+            logger.error(f"原因: {e}")
             return []
 
-    print(f"📄 解析 master.idx 文件: {url}，共 {len(lines)} 行")
+    logger.info(f"📄 解析 master.idx 文件: {url}，共 {len(lines)} 行")
 
     start = False
     results = []
@@ -60,7 +65,7 @@ def get_form4_accessions_from_index(date: datetime, cache_dir: str = ".cache") -
         url = f"https://www.sec.gov/Archives/{filename}"
         results.append((cik.zfill(10), accession, url))
 
-    print(f"✅ {date.strftime('%Y-%m-%d')} 提取 Form 4 条数: {len(results)}")
+    logger.info(f"✅ {date.strftime('%Y-%m-%d')} 提取 Form 4 条数: {len(results)}")
     return results
 
 def get_form4_accessions_range(days_back: int, cache_dir: str = ".cache") -> List[Tuple[str, str, str]]:
@@ -78,11 +83,12 @@ def get_form4_accessions_range(days_back: int, cache_dir: str = ".cache") -> Lis
     seen = set()  # 用于去重 accession
     for i in range(days_back):
         date = datetime.now() - timedelta(days=i)
-        print(f"🔎 正在处理日期: {date.strftime('%Y-%m-%d')}")
+        logger.info(f"🔎 正在处理日期: {date.strftime('%Y-%m-%d')}")
         daily_results = get_form4_accessions_from_index(date, cache_dir=cache_dir)
+        logger.info(f"📌 当日 Form 4 提取数量: {len(daily_results)}")
         for cik, accession, url in daily_results:
             if accession not in seen:
                 seen.add(accession)
                 all_results.append((cik, accession, url))
-    print(f"📦 回溯 {days_back} 天共提取 Form 4 条目: {len(all_results)}")
+    logger.info(f"📦 回溯 {days_back} 天共提取 Form 4 条目: {len(all_results)}")
     return all_results
