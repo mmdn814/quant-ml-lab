@@ -34,8 +34,12 @@ def get_form4_accessions_from_index(date: datetime, cache_dir: str = ".cache") -
             lines = res.text.splitlines()
             with open(cache_path, "w") as f:
                 f.write(res.text)
-        except requests.RequestException:
+        except requests.RequestException as e:
+            print(f"❌ 下载失败: {url}")
+            print(f"原因: {e}")
             return []
+
+    print(f"📄 解析 master.idx 文件: {url}，共 {len(lines)} 行")
 
     start = False
     results = []
@@ -56,6 +60,7 @@ def get_form4_accessions_from_index(date: datetime, cache_dir: str = ".cache") -
         url = f"https://www.sec.gov/Archives/{filename}"
         results.append((cik.zfill(10), accession, url))
 
+    print(f"✅ {date.strftime('%Y-%m-%d')} 提取 Form 4 条数: {len(results)}")
     return results
 
 def get_form4_accessions_range(days_back: int, cache_dir: str = ".cache") -> List[Tuple[str, str, str]]:
@@ -73,9 +78,11 @@ def get_form4_accessions_range(days_back: int, cache_dir: str = ".cache") -> Lis
     seen = set()  # 用于去重 accession
     for i in range(days_back):
         date = datetime.now() - timedelta(days=i)
+        print(f"🔎 正在处理日期: {date.strftime('%Y-%m-%d')}")
         daily_results = get_form4_accessions_from_index(date, cache_dir=cache_dir)
         for cik, accession, url in daily_results:
             if accession not in seen:
                 seen.add(accession)
                 all_results.append((cik, accession, url))
+    print(f"📦 回溯 {days_back} 天共提取 Form 4 条目: {len(all_results)}")
     return all_results
