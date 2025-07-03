@@ -1,7 +1,12 @@
-requests           # 用于请求 EDGAR、Fintel 等数据接口
-beautifulsoup4     # 用于解析 HTML 页面，如 Fintel 网页结构
-PyYAML             # 用于解析 config/schedule_config.yaml
-pytz               # 用于处理时区（如调度精度控制）
-pandas             # 核心数据分析和保存 CSV
-lxml               # 加快 beautifulsoup 的 HTML 解析速度（强烈推荐）
-python-dotenv      # 用于读取本地 .env 环境变量
+# ✅ 文件：requirements.txt
+# 用于 GitHub Actions / 本地运行 CEO insider 策略
+
+requests>=2.31.0
+beautifulsoup4>=4.12.2
+lxml>=4.9.3
+python-telegram-bot>=20.3
+pandas>=2.0.3
+# logging 不需要单独安装，使用标准库
+# datetime 等同上
+# 可选：支持 CLI 扩展
+click>=8.1.3
